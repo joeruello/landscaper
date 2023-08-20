@@ -10,25 +10,32 @@ mod github;
 
 use crate::github::GithubClient;
 
-/// Simple program to greet a person
+/// A tool to do find and replace operations across in github organisations
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+
+    /// Flag to actually write the changes to github
     #[arg(short, long, default_value_t = false)]
     write: bool,
 
+    /// The string to find in the code
     #[arg(short, long)]
     find: String,
 
+    /// The string to replace the find string with
     #[arg(short, long)]
     replace: String,
 
+    /// The github org to search
     #[arg(short, long)]
     org: String,
 
+    /// The branch changes will be pushes to
     #[arg(short, long, default_value = "landscaper")]
     branch: String,
 
+    /// Regex filter on the repository name, use this to only target specific repositories
     #[arg(long)]
     repo: Option<String>,
 }
@@ -117,9 +124,6 @@ async fn process_repo(ctx: &Context, (repo, files): (String, Vec<Code>)) -> Resu
         .context(format!("Fetching repo {owner}/{repo}"))?;
 
     let repo_name = &repo.name;
-
-
-
 
     let default_branch = repo
         .default_branch
