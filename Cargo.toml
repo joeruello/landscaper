@@ -1,0 +1,21 @@
+[package]
+name = "landscaper"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+octocrab = "0.29.3"
+anyhow = "1.0.75"
+itertools = "0.11.0"
+base64 = "0.21.2"
+prettydiff = "0.6.4"
+clap = { version = "4.3.22", features = ["derive"] }
+async-trait = "0.1.73"
+serde_json = "1.0.105"
+serde = "1.0.183"
+http = "0.2.9"
+dialoguer = "0.10.4"
+regex = "1.9.3"
