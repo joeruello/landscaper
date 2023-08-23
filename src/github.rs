@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use http::Uri;
-use octocrab::{map_github_error, models::repos::Object, params::repos::Reference, Octocrab};
+use octocrab::{map_github_error, models::repos::{Object, Ref}, params::repos::Reference, Octocrab};
 
 pub(crate) struct GithubClient {
     client: Octocrab,
@@ -40,14 +40,12 @@ impl GithubClient {
         repo: &str,
         branch_name: &str,
         reference: &Reference,
-    ) -> Result<()> {
+    ) -> Result<Ref> {
         self.repos(owner, repo)
             .create_ref(
                 &Reference::Branch(branch_name.to_string()),
                 self.get_sha_for_ref(owner, repo, reference).await?,
-            )
-            .await?;
-        Ok(())
+            ).await.map_err(anyhow::Error::from)
     }
 
     pub async fn get_file_content(&self, owner: &str, repo: &str, path: &str) -> Result<String> {
