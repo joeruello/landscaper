@@ -1,6 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use http::Uri;
-use octocrab::{map_github_error, models::repos::{Object, Ref}, params::repos::Reference, Octocrab};
+use octocrab::{
+    map_github_error,
+    models::repos::{Content, Object, Ref},
+    params::repos::Reference,
+    Octocrab,
+};
 
 pub(crate) struct GithubClient {
     client: Octocrab,
@@ -45,10 +50,12 @@ impl GithubClient {
             .create_ref(
                 &Reference::Branch(branch_name.to_string()),
                 self.get_sha_for_ref(owner, repo, reference).await?,
-            ).await.map_err(anyhow::Error::from)
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
-    pub async fn get_file_content(&self, owner: &str, repo: &str, path: &str) -> Result<String> {
+    pub async fn get_file_content(&self, owner: &str, repo: &str, path: &str) -> Result<Content> {
         self.repos(owner, repo)
             .get_content()
             .path(path)
@@ -56,9 +63,7 @@ impl GithubClient {
             .await?
             .items
             .pop()
-            .context("Getting file content")?
-            .decoded_content()
-            .context("Decoding content")
+            .context("Getting file content")
     }
 
     pub async fn delete_ref_if_exists(
@@ -74,14 +79,14 @@ impl GithubClient {
     }
 
     pub async fn delete_ref(&self, owner: &str, repo: &str, reference: &Reference) -> Result<()> {
-        let route = format!("/repos/{owner}/{repo}/refs/{}", reference.ref_url(),);
+        let route = format!("/repos/{owner}/{repo}/git/refs/{}", reference.ref_url(),);
         let uri = Uri::builder()
-            .path_and_query(route)
+            .path_and_query(&route)
             .build()
             .context("buidling path")?;
         map_github_error(self._delete(uri, None::<&()>).await?)
             .await
             .map(drop)
-            .context("Error deleting ref")
+            .context(format!("Error deleting ref {route}"))
     }
 }

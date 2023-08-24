@@ -1,9 +1,12 @@
-use anyhow::{bail, Context as anyhowContext, Result};
+extern crate log;
+
+use anyhow::{Context as anyhowContext, Result};
 use clap::{Args, Parser, Subcommand};
 use itertools::Itertools;
+use log::info;
 use octocrab::{
-    models::{repos::Object, Code, Repository},
-    params::repos::Reference,
+    models::{ Code, Repository},
+    params::{repos::Reference, Direction},
     Page,
 };
 use prettydiff::{diff_lines, text::ContextConfig};
@@ -40,8 +43,15 @@ impl From<Change> for ChangeSet {
 }
 #[derive(Debug)]
 enum Change {
-    CreateFile { path: String, content: String },
-    UpdateFile { path: String, content: String },
+    CreateFile {
+        path: String,
+        content: String,
+    },
+    UpdateFile {
+        path: String,
+        content: String,
+        sha: String,
+    },
 }
 
 /// Here's my app!
@@ -115,6 +125,7 @@ enum Output {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
     let args = App::parse();
     let ctx = Context::new(
         GithubClient::new(env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN not set")),
@@ -203,15 +214,14 @@ async fn find_and_replace_in_repo(
 
     for code in files {
         let path = &code.path;
-        let orginal = ctx
-            .client
-            .get_file_content(owner, repo_name, path)
-            .await
+        let orginal = ctx.client.get_file_content(owner, repo_name, path).await?;
+        let content = orginal
+            .decoded_content()
             .context(format!("Getting content for {owner}/{repo_name}/{path}"))?;
 
-        let replaced = orginal.replace(find, replace);
+        let replaced = content.replace(find, replace);
 
-        if orginal == replaced {
+        if content == replaced {
             println!("No content was changed in {owner}/{repo_name}/{path}, continuing");
             continue;
         }
@@ -219,7 +229,7 @@ async fn find_and_replace_in_repo(
         println!("{owner}/{repo_name}/{path}");
         println!(
             "{}",
-            diff_lines(&orginal, &replaced).format_with_context(
+            diff_lines(&content, &replaced).format_with_context(
                 Some(ContextConfig {
                     context_size: 2,
                     skipping_marker: "---"
@@ -231,6 +241,7 @@ async fn find_and_replace_in_repo(
         changes.add(Change::UpdateFile {
             path: path.to_owned(),
             content: replaced,
+            sha: orginal.sha,
         });
     }
 
@@ -271,8 +282,7 @@ async fn apply_changes(
         )
         .await?;
 
-    let branch = ctx
-        .client
+    ctx.client
         .branch_from_ref(
             owner,
             repo_name,
@@ -281,12 +291,6 @@ async fn apply_changes(
         )
         .await
         .context(format!("Creating remote branch {branch_name}"))?;
-
-    let sha = match branch.object {
-        Object::Commit { sha, url: _ } => sha,
-        Object::Tag { sha, url: _ } => sha,
-        _ => bail!("could not get sha for ref {:?}", branch.object),
-    };
 
     for change in changes.changes {
         match change {
@@ -298,8 +302,9 @@ async fn apply_changes(
                     .send()
                     .await?;
             }
-            Change::UpdateFile { path, content } => {
-                ctx.client
+            Change::UpdateFile { path, content, sha } => {
+                ctx
+                    .client
                     .repos(owner, repo_name)
                     .update_file(&path, format!("chore: Update {}", &path), content, &sha)
                     .branch(branch_name)
@@ -375,16 +380,16 @@ async fn create_missing_catalog_files(ctx: &Context) -> Result<()> {
         if let Some(filter) = &ctx.options.repo {
             let re = Regex::new(filter).unwrap();
             if !re.is_match(&repo.name) {
-                // println!(
-                //     "Skipping {}/{} as it does not match filter",
-                //     owner, repo.name
-                // );
+                info!(
+                    "Skipping {}/{} as it does not match filter",
+                    owner, repo.name
+                );
                 continue;
             }
         }
 
         if let Some(true) = repo.archived {
-            // println!("{} is archived", &repo.name);
+            info!("{} is archived", &repo.name);
             continue;
         }
 
@@ -399,7 +404,9 @@ async fn create_missing_catalog_files(ctx: &Context) -> Result<()> {
 
         if has_catalog.is_err() {
             println!("{} does not have catalog-info.yaml", &repo.name);
-            let changeset = create_catalog_entry(ctx, &repo).await?;
+            let changeset = create_catalog_entry(ctx, &repo)
+                .await
+                .context(format!("creating catalog-info.yaml for {}", repo.name))?;
             results.push(
                 apply_changes(
                     ctx,
@@ -407,7 +414,8 @@ async fn create_missing_catalog_files(ctx: &Context) -> Result<()> {
                     changeset,
                     "chore: Add catalog-info.yaml [no-ci]".to_owned(),
                 )
-                .await?,
+                .await
+                .context(format!("creating PR for {}", repo.name))?,
             );
         }
     }
@@ -423,34 +431,53 @@ async fn create_missing_catalog_files(ctx: &Context) -> Result<()> {
 
 async fn enrich_catalog_files(ctx: &Context) -> Result<()> {
     let owner = &ctx.options.org;
-    let repos = ctx.client.orgs(owner).list_repos().send().await?;
+    let repos = ctx
+        .client
+        .orgs(owner)
+        .list_repos()
+        .direction(Direction::Descending)
+        .sort(octocrab::params::repos::Sort::Updated)
+        .send()
+        .await?;
 
     let mut results = vec![];
 
     for repo in ctx.client.all_pages(repos).await?.into_iter() {
         if let Some(true) = repo.archived {
-            // println!("{} is archived, skipping", &repo.name);
+            info!("{} is archived, skipping", &repo.name);
             continue;
         }
 
         if let Some(filter) = &ctx.options.repo {
             let re = Regex::new(filter).unwrap();
             if !re.is_match(&repo.name) {
-                // println!("Skipping {}/{} as it does not match filter", owner, repo.name);
+                info!(
+                    "Skipping {}/{} as it does not match filter",
+                    owner, repo.name
+                );
                 continue;
             }
         }
-        // println!("looking at {}", repo.name);
+        info!("looking at {}", repo.name);
 
-        let changeset = update_catalog_info(ctx, &repo).await?;
+        let changeset = update_catalog_info(ctx, &repo)
+            .await
+            .context(format!("updating catalog-info.yaml for {}", repo.name))?;
+
+        if changeset.changes.is_empty() {
+            info!("no changes for {}", repo.name);
+            continue;
+        }
+
         results.push(
             apply_changes(
                 ctx,
                 &repo,
                 changeset,
-                "[no-ci] chore: Update catalog.info.yaml`".to_owned(),
+                "[no-ci] chore: Update catalog.info.yaml".to_owned(),
             )
-            .await?,
+            .await
+            .context(format!("creating PR for {}", repo.name))?,
         );
     }
 
@@ -469,19 +496,54 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
     let catalog_original = ctx
         .client
         .get_file_content(owner, &repo.name, "catalog-info.yaml")
-        .await?;
+        .await
+        .context(format!(
+            "getting catalog-info.yaml for {}/{}",
+            owner, repo.name
+        ))?;
 
-    let catalog: Result<backstage::Component> =
-        serde_yaml::from_str(&catalog_original).map_err(anyhow::Error::msg);
+    let original_content = catalog_original.decoded_content().context(format!(
+        "getting content for catalog-info.yaml for {}/{}",
+        owner, repo.name
+    ))?;
+
+    info!("{} has catalog-info.yaml", &repo.name);
+
+    let catalog: Result<backstage::Component> = serde_yaml::from_str(&original_content)
+        .map_err(anyhow::Error::msg)
+        .context(format!(
+            "parsing catalog-info.yaml for {}/{}",
+            owner, repo.name
+        ));
 
     if matches!(catalog, Result::Err(_)) {
+        info!("{} does not have a valid catalog-info.yaml", &repo.name);
         return Ok(ChangeSet::new());
     }
 
-    let mut component = catalog.unwrap();
+    let mut component = catalog
+        .context(format!(
+            "parsing catalog-info.yaml for {}/{}",
+            owner, repo.name
+        ))
+        .unwrap();
+
+    info!("{} has a valid catalog-info.yaml", &repo.name);
 
     if component.spec._type != "service" {
+        info!("{} is not a service, skipping", &repo.name);
         return Ok(ChangeSet::new());
+    }
+
+    if component.metadata.name == "template" {
+        component.metadata.name = repo.name.to_owned()
+    }
+
+    if component.metadata.description
+        == "A template repository used to bootstrap the CICD environment with the required files"
+        || component.metadata.description.is_empty()
+    {
+        component.metadata.description = repo.description.clone().unwrap_or_default()
     }
 
     component.metadata.annotations.insert(
@@ -492,7 +554,11 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
     let argo_file = ctx
         .client
         .get_file_content(owner, &repo.name, ".argocd.yaml")
-        .await;
+        .await
+        .context(format!("getting .argocd.yaml for {}/{}", owner, repo.name));
+
+    info!("{} has .argocd.yaml", &repo.name);
+
     if argo_file.is_ok() {
         component
             .metadata
@@ -500,11 +566,9 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
             .entry("argocd/app-name".to_owned())
             .or_insert(repo.name.to_owned());
 
-        let argo_contents = argo_file?;
+        let argo_contents = argo_file?.decoded_content().unwrap_or_default();
         let app_spec: argocd::ArgoApp = serde_yaml::from_str(&argo_contents)?;
 
-        dbg!(&app_spec);
-    
         component
             .metadata
             .annotations
@@ -519,6 +583,7 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
     }
 
     // legacy DB
+
     if find_string_in_repo(ctx, repo, "notmidship-db")
         .await?
         .total_count
@@ -530,6 +595,8 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
             .depends_on
             .push("resource:hip-rds-mysql-prod".to_owned());
     }
+
+    info!("{} has notmidship-db", &repo.name);
 
     // legacy read only DB
     if find_string_in_repo(ctx, repo, "notmidship-ro-db")
@@ -544,6 +611,8 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
             .push("resource:hip-rds-mysql-prod-ro".to_owned());
     }
 
+    info!("{} has notmidship-ro-db", &repo.name);
+
     // rabbitmq
     if find_string_in_repo(ctx, repo, "innocent-chimp")
         .await?
@@ -557,6 +626,8 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
             .push("resource:rabbitmq-innocent-chimp".to_owned());
     }
 
+    info!("{} has rabbitmq", &repo.name);
+
     // kafka
     if find_string_in_repo(ctx, repo, "kafka-prod")
         .await?
@@ -569,6 +640,8 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
             .depends_on
             .push("resource:kafka-prod".to_owned());
     }
+
+    info!("{} api gateway", &repo.name);
     // api gateway
     if find_string_in_repo(ctx, repo, "gloo:")
         .await?
@@ -579,26 +652,36 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         component.spec.depends_on.push("component:gloo".to_owned());
     }
 
-    let catalog_updated = serde_yaml::to_string(&component)?;
+    info!("{} has gloo", &repo.name);
 
-    if catalog_original != catalog_updated {
+    let catalog_updated = serde_yaml::to_string(&component).context(format!(
+        "serializing catalog-info.yaml for {}/{}",
+        owner, repo.name
+    ))?;
+
+    if original_content != catalog_updated {
         println!(
             "#{}:\n----\n{}\n\n",
             &repo.name,
-            catalog_updated // diff_lines(&catalog_original, &catalog_updated).format_with_context(
-                            //     Some(ContextConfig {
-                            //         context_size: 2,
-                            //         skipping_marker: "---"
-                            //     }),
-                            //     true
-                            // )
+            // catalog_updated
+            diff_lines(&original_content, &catalog_updated).format_with_context(
+                Some(ContextConfig {
+                    context_size: 2,
+                    skipping_marker: "---"
+                }),
+                true
+            )
         );
+        info!("waiting or rate limit");
 
-        return Ok(Change::UpdateFile {
-            path: "catalog-info.yaml".to_owned(),
+        let mut changes = ChangeSet::new();
+        changes.add(Change::UpdateFile {
+            path: catalog_original.path,
             content: catalog_updated,
-        }
-        .into());
+            sha: catalog_original.sha,
+        });
+
+        return Ok(changes);
     }
 
     Ok(ChangeSet::new())

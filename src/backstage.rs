@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,9 +31,9 @@ pub struct EntiyMetadata {
     pub name: String,
     pub description: String,
     #[serde(default)]
-    pub annotations: HashMap<String, String>,
-    #[serde(default,skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>
+    pub annotations: BTreeMap<String, String>, // BTreeMaps are sorted by keys, Hashmaps are random
+    #[serde(default,skip_serializing_if = "BTreeSet::is_empty")]
+    pub tags: BTreeSet<String>
 }
 
 impl Component {
@@ -52,8 +52,8 @@ impl Component {
             metadata: EntiyMetadata {
                 name: name.into(),
                 description: descripton.into(),
-                annotations: HashMap::new(),
-                tags: Vec::new()
+                annotations: BTreeMap::new(),
+                tags: BTreeSet::new()
             },
         }
     }
