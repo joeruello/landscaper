@@ -20,10 +20,10 @@ pub struct ComponentSpec {
     pub owner: String,
     #[serde(default,skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    #[serde(default,skip_serializing_if = "Vec::is_empty")]
-    pub depends_on: Vec<String>,
-    #[serde(default,skip_serializing_if = "Vec::is_empty")]
-    pub consumes_apis: Vec<String>,
+    #[serde(default,skip_serializing_if = "BTreeSet::is_empty")]
+    pub depends_on: BTreeSet<String>,
+    #[serde(default,skip_serializing_if = "BTreeSet::is_empty")]
+    pub consumes_apis: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -31,7 +31,7 @@ pub struct EntiyMetadata {
     pub name: String,
     pub description: String,
     #[serde(default)]
-    pub annotations: BTreeMap<String, String>, // BTreeMaps are sorted by keys, Hashmaps are random
+    pub annotations: BTreeMap<String, String>,
     #[serde(default,skip_serializing_if = "BTreeSet::is_empty")]
     pub tags: BTreeSet<String>
 }
@@ -46,8 +46,8 @@ impl Component {
                 lifecycle: "experimental".to_owned(),
                 owner: "hipages".to_owned(),
                 system: None,
-                depends_on: Vec::new(),
-                consumes_apis: Vec::new(),
+                depends_on: BTreeSet::new(),
+                consumes_apis: BTreeSet::new(),
             },
             metadata: EntiyMetadata {
                 name: name.into(),

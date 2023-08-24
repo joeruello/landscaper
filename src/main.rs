@@ -593,7 +593,7 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         component
             .spec
             .depends_on
-            .push("resource:hip-rds-mysql-prod".to_owned());
+            .insert("resource:hip-rds-mysql-prod".to_owned());
     }
 
     info!("{} has notmidship-db", &repo.name);
@@ -608,7 +608,8 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         component
             .spec
             .depends_on
-            .push("resource:hip-rds-mysql-prod-ro".to_owned());
+            .insert("resource:hip-rds-mysql-prod-ro".to_owned());
+
     }
 
     info!("{} has notmidship-ro-db", &repo.name);
@@ -623,7 +624,7 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         component
             .spec
             .depends_on
-            .push("resource:rabbitmq-innocent-chimp".to_owned());
+            .insert("resource:rabbitmq-innocent-chimp".to_owned());
     }
 
     info!("{} has rabbitmq", &repo.name);
@@ -638,7 +639,7 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         component
             .spec
             .depends_on
-            .push("resource:kafka-prod".to_owned());
+            .insert("resource:kafka-prod".to_owned());
     }
 
     info!("{} api gateway", &repo.name);
@@ -649,7 +650,7 @@ async fn update_catalog_info(ctx: &Context, repo: &Repository) -> Result<ChangeS
         .unwrap_or_default()
         > 0
     {
-        component.spec.depends_on.push("component:gloo".to_owned());
+        component.spec.depends_on.insert("component:gloo".to_owned());
     }
 
     info!("{} has gloo", &repo.name);
