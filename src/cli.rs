@@ -29,6 +29,9 @@ pub(crate) struct GlobalOpts {
     /// Regex filter on the repository name, use this to only target specific repositories
     #[arg(long)]
     pub repo: Option<String>,
+
+    #[arg(long)]
+    pub skip: Option<usize>
 }
 
 #[derive(Debug, Subcommand)]

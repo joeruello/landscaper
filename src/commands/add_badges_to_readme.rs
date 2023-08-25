@@ -1,10 +1,7 @@
 use crate::{apply_changes, backstage, Change, ChangeSet, Context, Output};
 use anyhow::{Context as anyhowContext, Result};
-use log::info;
-use octocrab::{
-    models::Repository,
-    params::Direction,
-};
+use log::{debug, info, warn};
+use octocrab::{models::Repository, params::Direction};
 use prettydiff::{diff_lines, text::ContextConfig};
 use regex::Regex;
 
@@ -21,30 +18,44 @@ pub(crate) async fn add_badges_to_readme(ctx: &Context) -> Result<()> {
 
     let mut results = vec![];
 
-    for repo in ctx.client.all_pages(repos).await?.into_iter() {
-        if let Some(true) = repo.archived {
-            info!("{} is archived, skipping", &repo.name);
-            continue;
-        }
+    info!("Finding eligable repos...");
 
-        if let Some(filter) = &ctx.options.repo {
-            let re = Regex::new(filter).unwrap();
-            if !re.is_match(&repo.name) {
-                info!(
-                    "Skipping {}/{} as it does not match filter",
-                    owner, repo.name
-                );
-                continue;
+    let skip = ctx.options.skip.unwrap_or(0);
+    let repos: Vec<_> = ctx
+        .client
+        .all_pages(repos)
+        .await?
+        .into_iter()
+        .filter(|repo| {
+            if let Some(true) = repo.archived {
+                return false;
             }
-        }
-        info!("looking at {}", repo.name);
 
-        let changeset = add_badge_to_readme(ctx, &repo)
-            .await
-            .context(format!("updating catalog-info.yaml for {}", repo.name))?;
+            if let Some(filter) = &ctx.options.repo {
+                let re = Regex::new(filter).unwrap();
+                if !re.is_match(&repo.name) {
+                    return false;
+                }
+            }
+            true
+        })
+        .skip(skip)
+        .collect();
+
+    info!("{} found repos to process", repos.len());
+    let total_repos = repos.len() + skip;
+    for (idx, repo) in repos.into_iter().enumerate() {
+        if (idx + skip) % 10 == 0 {
+            info!("{}/{total_repos} repos processed", idx+skip);
+        }
+
+        let changeset = add_badge_to_readme(ctx, &repo).await.with_context(||format!(
+            "updating catalog-info.yaml for {}",
+            repo.html_url.clone().unwrap().as_str()
+        ))?;
 
         if changeset.changes.is_empty() {
-            info!("no changes for {}", repo.name);
+            // info!("no changes for {}", repo.name);
             continue;
         }
 
@@ -65,12 +76,30 @@ pub(crate) async fn add_badges_to_readme(ctx: &Context) -> Result<()> {
             println!("PR: {}", url);
         }
     }
+    
+    println!("Done");
 
     Ok(())
 }
 
 async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeSet> {
     let owner = &ctx.options.org;
+
+    let readme = ctx
+        .client
+        .get_file_content(owner, &repo.name, "README.md")
+        .await
+        .context(format!("getting README.md for {}/{}", owner, repo.name))?;
+
+    let readme_content = readme.decoded_content().context(format!(
+        "getting content for README.md for {}/{}",
+        owner, repo.name
+    ))?;
+
+    if readme_content.contains("https://backyard.k8s.hipages.com.au/api/badges/entity/") {
+        debug!("{} already has a badge, skipping", &repo.name);
+        return Ok(ChangeSet::new());
+    }
 
     let catalog_info = ctx
         .client
@@ -81,7 +110,7 @@ async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeS
             owner, repo.name
         ))?;
 
-    info!("{} has catalog-info.yaml", &repo.name);
+    debug!("{} has catalog-info.yaml", &repo.name);
 
     let catalog: Result<backstage::Component> =
         serde_yaml::from_str(&catalog_info.decoded_content().context(format!(
@@ -95,7 +124,7 @@ async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeS
         ));
 
     if matches!(catalog, Result::Err(_)) {
-        info!("{} does not have a valid catalog-info.yaml", &repo.name);
+        warn!("{} does not have a valid catalog-info.yaml", &repo.name);
         return Ok(ChangeSet::new());
     }
 
@@ -106,33 +135,11 @@ async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeS
         ))
         .unwrap();
 
-    info!("{} has a valid catalog-info.yaml", &repo.name);
+    // if component.kind != "Component" {
+    //     warn!("{} is not a component, skipping", &repo.name);
+    //     return Ok(ChangeSet::new());
+    // }
 
-    if component.spec._type != "service" {
-        info!("{} is not a service, skipping", &repo.name);
-        return Ok(ChangeSet::new());
-    }
-
-    let readme = ctx
-        .client
-        .get_file_content(owner, &repo.name, "README.md")
-        .await
-        .context(format!(
-            "getting README.md for {}/{}",
-            owner, repo.name
-        ))?;
-
-    let readme_content = readme.decoded_content().context(
-        format!("getting content for README.md for {}/{}", owner, repo.name),
-    )?;
-
-    if readme_content.contains("https://backyard.k8s.hipages.com.au/api/badges/entity/") {
-        info!(
-            "{} already has a badge, skipping",
-            &repo.name
-        );
-        return Ok(ChangeSet::new());
-    }
 
 
     let owner = &component.spec.owner;
@@ -141,7 +148,8 @@ async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeS
     let modified_readme_content = format!(
         r#"[![Link to {name} in hipages Developer Portal, {entity_type}: {name}](https://backyard.k8s.hipages.com.au/api/badges/entity/default/{entity_type}/{name}/badge/pingback "Link to {name} in hipages Developer Portal")](https://backyard.k8s.hipages.com.au/catalog/default/{entity_type}/{name})
 [![Entity owner badge, owner: {owner}](https://backyard.k8s.hipages.com.au/api/badges/entity/default/{entity_type}/{name}/badge/owner "Entity owner badge")](https://backyard.k8s.hipages.com.au/catalog/default/{entity_type}/{name})
-{readme_content}"#);
+{readme_content}"#
+    );
 
     if readme_content != modified_readme_content {
         println!(
@@ -162,7 +170,7 @@ async fn add_badge_to_readme(ctx: &Context, repo: &Repository) -> Result<ChangeS
             content: modified_readme_content,
             sha: readme.sha,
         });
-
+        info!("PR created for {}", &repo.name);
         return Ok(changes);
     }
 
