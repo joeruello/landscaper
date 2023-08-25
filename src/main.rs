@@ -85,6 +85,9 @@ async fn main() -> Result<()> {
         Command::EnrichCatalogFiles {} => {
             commands::enrich_catalog_files(&ctx).await?;
         }
+        Command::AddBadgesToReadmes {} => {
+            commands::add_badges_to_readme(&ctx).await?;
+        }
     }
 
     Ok(())

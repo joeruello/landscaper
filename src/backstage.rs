@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct  
     Component {
         api_version: String,
-        kind: String,
+        pub kind: String,
         pub metadata: EntiyMetadata,
         pub spec: ComponentSpec,
 }

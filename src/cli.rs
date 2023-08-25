@@ -39,6 +39,8 @@ pub(crate) enum Command {
     CreateCatalogFiles {},
     /// Try and fill out catalog-info.yaml files in an org
     EnrichCatalogFiles {},
+    /// Add backstage badges to README.md files in an org
+    AddBadgesToReadmes {},
 }
 
 #[derive(Debug, Args)]
