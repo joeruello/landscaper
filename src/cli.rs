@@ -15,22 +15,23 @@ pub(crate) struct App {
 #[command(author, version, about, long_about = None)]
 pub(crate) struct GlobalOpts {
     /// Flag to actually write the changes to github
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, global = true)]
     pub write: bool,
 
     /// The github org to search
-    #[arg(short, long)]
+    #[arg()]
     pub org: String,
 
     /// The branch changes will be pushes to
-    #[arg(short, long, default_value = "landscaper")]
+    #[arg(short, long, default_value = "landscaper", global = true)]
     pub branch: String,
 
     /// Regex filter on the repository name, use this to only target specific repositories
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub repo: Option<String>,
 
-    #[arg(long)]
+    /// Skip the first n repos when processing
+    #[arg(long, global = true)]
     pub skip: Option<usize>
 }
 
@@ -55,4 +56,8 @@ pub(crate) struct FindReplaceArgs {
     /// The string to replace the find string with
     #[arg(short, long)]
     pub replace: String,
+
+    /// Commit message to create the pull requests with
+    #[arg(short, long)]
+    pub message: Option<String>,
 }

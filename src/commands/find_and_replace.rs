@@ -104,11 +104,10 @@ async fn find_and_replace_in_repo(
         });
     }
 
-    apply_changes(
-        ctx,
-        &repo,
-        changes,
-        "[no-ci] chore: Replace `{find}` with `{replace}`".to_owned(),
-    )
-    .await
+    let message = args
+        .message
+        .clone()
+        .unwrap_or(format!("chore: Replace {} with {}", args.find, args.replace));
+
+    apply_changes(ctx, &repo, changes, message).await
 }
