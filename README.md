@@ -1,6 +1,6 @@
-#landscaper
+### landscaper
 
-CLI tool to do mass operations on a github organisation, mostly for hipages' developer portal Backyard.
+CLI tool to do mass operations on a github organization, eg find and replace.
 
 ## Usage
 
